@@ -885,6 +885,8 @@ function processQR(data) {
 
   const key  = qrKey(data);
   const name = '';
+  const dbg = document.getElementById('qrDebug');
+  if (dbg) dbg.textContent = 'KEY: ' + key.substring(0, 40);
   processWithKey(key, name, now);
 }
 
