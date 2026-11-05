@@ -719,14 +719,14 @@ function showFlashSimple(type, title, sub, btns) {
 }
 
 // Green flash with optional name-link section
-function showFlashGreen(key, displayName) {
+function showFlashGreen(key, displayName, dbgHtml='') {
   const el = document.getElementById('flash');
   const shortLbl = lbl(key);
   el.className = 'flash ok';
   el.innerHTML = `
     <div class="fi">\u2713</div>
     <div class="ft">Handdoek uitgedeeld</div>
-    <div class="fs" id="flName">${displayName}</div>
+    <div class="fs" id="flName">${displayName}${dbgHtml}</div>
     <div class="fbtns">
       <button class="btn btn-w" data-a="ok">OK</button>
       <button class="btn btn-wr" data-a="undo">Ongedaan</button>
@@ -877,32 +877,40 @@ function saveLinkToKey(key, mid, name, prefix = '\u2713 ') {
 // -- QR processing ------------------------------------------------
 let lastQR = null, lastQRt = 0;
 
+let lastRawToken = '';
 function processQR(data) {
   const now = Date.now();
   if (data === lastQR && now - lastQRt < 5000) return;
   if (!data.startsWith('vg_checkin_qr=')) return;
   lastQR = data; lastQRt = now;
 
+  const rawToken = data.replace('vg_checkin_qr=', '').trim();
+  lastRawToken = rawToken;
   const key  = qrKey(data);
-  const name = '';
   const dbg = document.getElementById('qrDebug');
   if (dbg) dbg.textContent = 'KEY: ' + key.substring(0, 40);
-  processWithKey(key, name, now);
+  processWithKey(key, '', now);
 }
 
 function processWithKey(key, name, now) {
   const m = active();
+  const isJwt = key.startsWith('mid');
+  const dbgHtml = '<div style="font-size:9px;opacity:.5;margin-top:10px;word-break:break-all">'
+    + 'KEY: ' + key.substring(0, 32) + '<br>'
+    + 'TOK: ' + lastRawToken.substring(0, 32) + '<br>'
+    + (isJwt ? 'OK JWT decoded' : 'NO raw token (geen JWT)')
+    + '</div>';
   if (m[key]) {
     const displayName = m[key].name || name;
     showFlashSimple('warn',
       'Heeft al een handdoek',
-      displayName + '<br><span style="font-size:12px;opacity:.65">' + fElapsed(now - m[key].t) + '</span>',
+      displayName + '<br><span style="font-size:12px;opacity:.65">' + fElapsed(now - m[key].t) + '</span>' + dbgHtml,
       '<button class="btn btn-w" data-a="ok">Sluiten</button>'
     );
   } else {
     const s = load(); s[key] = { t: now, name }; save(s);
     lastKey = key; render();
-    showFlashGreen(key, name);
+    showFlashGreen(key, name, dbgHtml);
   }
 }
 
