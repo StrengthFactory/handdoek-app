@@ -915,9 +915,30 @@ async function startCam() {
 }
 
 function scanLoop(v) {
-  const c = document.getElementById('canvas');
-  const ctx = c.getContext('2d');
   const dbg = document.getElementById('qrDebug');
+  // Try native BarcodeDetector (Android Chrome - handles colored QR codes natively)
+  if ('BarcodeDetector' in window) {
+    let det;
+    try { det = new BarcodeDetector({ formats: ['qr_code'] }); } catch(e) {}
+    if (det) {
+      if (dbg) dbg.textContent = '(native scanner actief)';
+      setInterval(async () => {
+        if (!document.getElementById('flash').hidden) return;
+        try {
+          const barcodes = await det.detect(v);
+          for (const b of barcodes) {
+            if (dbg) dbg.textContent = 'Gelezen: ' + b.rawValue.substring(0, 80);
+            processQR(b.rawValue);
+          }
+        } catch(e) {}
+      }, 200);
+      return;
+    }
+  }
+  // Fallback: jsQR
+  if (dbg) dbg.textContent = '(jsQR scanner actief)';
+  const c = document.getElementById('canvas');
+  const ctx = c.getContext('2d', { willReadFrequently: true });
   setInterval(() => {
     if (v.readyState < 1) return;
     if (!document.getElementById('flash').hidden) return;
@@ -927,30 +948,11 @@ function scanLoop(v) {
     const img = ctx.getImageData(0, 0, c.width, c.height);
     const qr = jsQR(img.data, img.width, img.height, { inversionAttempts: 'attemptBoth' });
     if (qr) {
-      if (dbg) dbg.textContent = 'ð ' + qr.data.substring(0, 80);
+      if (dbg) dbg.textContent = 'Gelezen: ' + qr.data.substring(0, 80);
       processQR(qr.data);
     }
   }, 200);
 }
-
-// Manual input (camera fallback)
-document.getElementById('mbtn').addEventListener('click', () => {
-  const v = document.getElementById('mqr').value.trim();
-  if (v) { processQR(v); document.getElementById('mqr').value = ''; }
-});
-document.getElementById('mqr').addEventListener('keydown', e => {
-  if (e.key === 'Enter') document.getElementById('mbtn').click();
-});
-
-// ÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂ Settings ÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂ
-document.getElementById('settingsBtn').addEventListener('click', () => {
-  const c = cfg();
-  document.getElementById('tsel').value = c.h || 4;
-  document.getElementById('sClubId').value = c.clubId || '';
-  document.getElementById('sApiKey').value = c.apiKey || '';
-  document.getElementById('sClubSecret').value = c.clubSecret || '';
-  document.getElementById('settingsBg').hidden = false;
-});
 
 function closeSettings() {
   const c = cfg();
