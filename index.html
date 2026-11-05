@@ -383,6 +383,31 @@ body {
 }
 .btn-done:hover { color: var(--greenl); border-color: var(--greenl); }
 
+/* -- Manual member lookup ------------------------------------------ */
+.lookup-wrap {
+  flex-shrink: 0;
+  padding: 14px 0 20px;
+  border-top: 1px solid var(--border);
+}
+.lookup-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .09em;
+  color: var(--muted);
+  margin-bottom: 10px;
+  font-family: var(--fb);
+}
+#lookupResult {
+  margin-top: 9px;
+  font-size: 13px;
+  line-height: 1.5;
+  min-height: 18px;
+  color: var(--muted);
+}
+#lookupResult.has-towel { color: #f97316; font-weight: 500; }
+#lookupResult.no-towel  { color: var(--greenl); font-weight: 500; }
+
 /* -- Settings modal ------------------------------------------------ */
 .mbg {
   position: fixed;
@@ -543,6 +568,16 @@ body {
 <div class="list-wrap">
   <div class="list-label">Handdoeken actief</div>
   <div id="mlist"></div>
+</div>
+
+<!-- MANUAL MEMBER LOOKUP -->
+<div class="lookup-wrap">
+  <div class="lookup-label">Zoek lid op lidnummer</div>
+  <div class="m-row">
+    <input type="number" id="lookupNum" placeholder="Lidnummer" inputmode="numeric">
+    <button class="btn-accent" id="lookupBtn">Zoeken</button>
+  </div>
+  <div id="lookupResult"></div>
 </div>
 
 <!-- SETTINGS MODAL -->
@@ -719,14 +754,14 @@ function showFlashSimple(type, title, sub, btns) {
 }
 
 // Green flash with optional name-link section
-function showFlashGreen(key, displayName, dbgHtml='') {
+function showFlashGreen(key, displayName) {
   const el = document.getElementById('flash');
   const shortLbl = lbl(key);
   el.className = 'flash ok';
   el.innerHTML = `
     <div class="fi">\u2713</div>
     <div class="ft">Handdoek uitgedeeld</div>
-    <div class="fs" id="flName">${displayName}${dbgHtml}</div>
+    <div class="fs" id="flName">${displayName}</div>
     <div class="fbtns">
       <button class="btn btn-w" data-a="ok">OK</button>
       <button class="btn btn-wr" data-a="undo">Ongedaan</button>
@@ -854,10 +889,16 @@ function saveLinkToKey(key, mid, name, prefix = '\u2713 ') {
   members[mid] = name;
   saveMembers(members);
 
-  // Update towel entry
+  // Migrate to member-id key so token refresh = same slot
+  const midKey = 'mid' + mid;
   const s = load();
-  if (s[key]) { s[key].name = name; s[key].memberId = mid; }
+  const originalT = (s[key] || s[midKey] || {}).t || Date.now();
+  s[midKey] = { t: originalT, name, memberId: mid };
+  if (key !== midKey && s[key]) delete s[key];
   save(s);
+
+  // Keep lastKey in sync so undo and re-link work on the mid key
+  if (typeof lastKey !== 'undefined' && lastKey === key) lastKey = midKey;
 
   // Update flash display name
   const nameEl = document.getElementById('flName');
@@ -875,43 +916,83 @@ function saveLinkToKey(key, mid, name, prefix = '\u2713 ') {
 }
 
 // -- QR processing ------------------------------------------------
+// Virtuagym QR tokens refresh every ~60 seconds as an entirely new random string.
+// Strategy: check by token key first. On a miss, call the visits API to see if
+// the SINGLE most recent check-in belongs to a member with an active towel.
+// This catches the token-refreshed-while-still-at-desk case.
 let lastQR = null, lastQRt = 0;
+let processingQR = false; // guard against overlapping async calls
 
-let lastRawToken = '';
-function processQR(data) {
+async function processQR(data) {
   const now = Date.now();
   if (data === lastQR && now - lastQRt < 5000) return;
   if (!data.startsWith('vg_checkin_qr=')) return;
+  if (processingQR) return;
   lastQR = data; lastQRt = now;
-
-  const rawToken = data.replace('vg_checkin_qr=', '').trim();
-  lastRawToken = rawToken;
-  const key  = qrKey(data);
-  const dbg = document.getElementById('qrDebug');
-  if (dbg) dbg.textContent = 'KEY: ' + key.substring(0, 40);
-  processWithKey(key, '', now);
+  processingQR = true;
+  try {
+    await processWithKey(qrKey(data), '', now);
+  } finally {
+    processingQR = false;
+  }
 }
 
-function processWithKey(key, name, now) {
+async function processWithKey(key, name, now) {
   const m = active();
-  const isJwt = key.startsWith('mid');
-  const dbgHtml = '<div style="font-size:9px;opacity:.5;margin-top:10px;word-break:break-all">'
-    + 'KEY: ' + key.substring(0, 32) + '<br>'
-    + 'TOK: ' + lastRawToken.substring(0, 32) + '<br>'
-    + (isJwt ? 'OK JWT decoded' : 'NO raw token (geen JWT)')
-    + '</div>';
   if (m[key]) {
     const displayName = m[key].name || name;
     showFlashSimple('warn',
       'Heeft al een handdoek',
-      displayName + '<br><span style="font-size:12px;opacity:.65">' + fElapsed(now - m[key].t) + '</span>' + dbgHtml,
+      displayName + '<br><span style="font-size:12px;opacity:.65">' + fElapsed(now - m[key].t) + '</span>',
       '<button class="btn btn-w" data-a="ok">Sluiten</button>'
     );
-  } else {
-    const s = load(); s[key] = { t: now, name }; save(s);
-    lastKey = key; render();
-    showFlashGreen(key, name, dbgHtml);
+    return;
   }
+
+  // Token key not found \u2014 check if most recent check-in has an active towel
+  // (handles the case where the token refreshed while the member stood at the desk)
+  const c = cfg();
+  if (c.clubId && c.apiKey && c.clubSecret) {
+    const existing = await checkRecentVisitHasTowel(c, now);
+    if (existing) {
+      showFlashSimple('warn',
+        'Heeft al een handdoek',
+        existing.name + '<br><span style="font-size:12px;opacity:.65">' + fElapsed(now - existing.t) + '</span>',
+        '<button class="btn btn-w" data-a="ok">Sluiten</button>'
+      );
+      return;
+    }
+  }
+
+  // New registration
+  const s = load(); s[key] = { t: now, name }; save(s);
+  lastKey = key; render();
+  showFlashGreen(key, name);
+}
+
+// Returns {name, t} if the single most recent check-in (within 10 min) already
+// has an active towel. Returns null otherwise.
+async function checkRecentVisitHasTowel(c, now) {
+  try {
+    const url = 'https://api.virtuagym.com/api/v1/club/' + c.clubId +
+      '/visits?limit=1&api_key=' + encodeURIComponent(c.apiKey) +
+      '&club_secret=' + encodeURIComponent(c.clubSecret);
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const data = await res.json();
+    const visits = data.result || data.visits || (Array.isArray(data) ? data : []);
+    if (!visits.length) return null;
+    const v = visits[0];
+    const mid = v.member_id || v.memberId;
+    if (!mid) return null;
+    // Only consider check-ins within the last 10 minutes
+    const visitTs = v.timestamp ? v.timestamp * 1000 : (v.created_at ? new Date(v.created_at).getTime() : 0);
+    if (visitTs && now - visitTs > 600000) return null;
+    const m = active();
+    const slot = m['mid' + mid];
+    if (slot) return { name: slot.name || ('Lid ' + mid), t: slot.t };
+  } catch {}
+  return null;
 }
 
 // -- Camera -------------------------------------------------------
@@ -1058,6 +1139,30 @@ document.getElementById('clearMembersBtn').addEventListener('click', () => {
       btn.classList.remove('confirm');
     }, 3000);
   }
+});
+
+// -- Manual lookup by member number --------------------------------
+document.getElementById('lookupBtn').addEventListener('click', () => {
+  const inp = document.getElementById('lookupNum');
+  const out = document.getElementById('lookupResult');
+  const mid = (inp.value || '').trim();
+  if (!mid) { out.className = ''; out.textContent = ''; return; }
+  const m = active();
+  const slot = m['mid' + mid];
+  if (slot) {
+    const name = slot.name || ('Lid ' + mid);
+    out.className = 'has-towel';
+    out.textContent = '\u26a0 ' + name + ' \u2014 handdoek ' + fElapsed(Date.now() - slot.t) + ' geleden uitgedeeld';
+  } else {
+    // Also check member cache for the name
+    const members = loadMembers();
+    const knownName = members[mid];
+    out.className = 'no-towel';
+    out.textContent = '\u2713 ' + (knownName ? knownName + ' heeft' : 'Lid ' + mid + ' heeft') + ' geen actieve handdoek';
+  }
+});
+document.getElementById('lookupNum').addEventListener('keydown', e => {
+  if (e.key === 'Enter') document.getElementById('lookupBtn').click();
 });
 
 // -- Init ---------------------------------------------------------
