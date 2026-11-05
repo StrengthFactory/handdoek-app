@@ -624,7 +624,21 @@ function active() {
 
 // -- QR key & label -----------------------------------------------
 function qrKey(data) {
-  return data.replace('vg_checkin_qr=', '').replace(/[^a-zA-Z0-9]/g, '');
+  const token = data.replace('vg_checkin_qr=', '').trim();
+  // Virtuagym tokens are JWTs - extract stable member ID from payload
+  // so the key doesn't change when the QR refreshes
+  try {
+    const parts = token.split('.');
+    if (parts.length === 3) {
+      const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+      const pad = b64 + '==='.slice(0, (4 - b64.length % 4) % 4);
+      const p = JSON.parse(atob(pad));
+      const mid = p.id || p.sub || p.member_id || p.userId || p.user_id;
+      if (mid) return 'mid' + String(mid);
+    }
+  } catch(e) {}
+  // Fallback: use sanitised raw token
+  return token.replace(/[^a-zA-Z0-9]/g, '');
 }
 
 function lbl(key) {
@@ -660,7 +674,7 @@ function render() {
   el.innerHTML = rowKeys.map((k,i) => {
     const isKnown = m[k].name && !m[k].name.startsWith('Lid \u00B7\u00B7\u00B7');
     return `<div class="mrow">
-      <span class="mname ${isKnown?'known':'anon'}">${m[k].name || lbl(k)}</span>
+      <span class="mname ${isKnown?'known':'anon'}">${m[k].name || ''}</span>
       <span class="mtime">${fLeft(m[k].t)}</span>
       <button class="btn-done" data-i="${i}">Ingeleverd</button>
     </div>`;
@@ -870,7 +884,7 @@ function processQR(data) {
   lastQR = data; lastQRt = now;
 
   const key  = qrKey(data);
-  const name = lbl(key);
+  const name = '';
   processWithKey(key, name, now);
 }
 
@@ -879,7 +893,7 @@ function processWithKey(key, name, now) {
   if (m[key]) {
     const displayName = m[key].name || name;
     showFlashSimple('warn',
-      'Al een handdoek',
+      'Heeft al een handdoek',
       displayName + '<br><span style="font-size:12px;opacity:.65">' + fElapsed(now - m[key].t) + '</span>',
       '<button class="btn btn-w" data-a="ok">Sluiten</button>'
     );
