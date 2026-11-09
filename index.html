@@ -1189,7 +1189,7 @@ document.getElementById('testApiBtn').addEventListener('click', async () => {
     statusEl.style.color = 'var(--warn)';
     return;
   }
-  statusEl.textContent = 'Bezig met testen…';
+  statusEl.textContent = 'Bezig met testen\u2026';
   statusEl.style.color = 'var(--muted)';
   try {
     const url = 'https://api.virtuagym.com/api/v1/club/' + c.clubId +
@@ -1202,18 +1202,18 @@ document.getElementById('testApiBtn').addEventListener('click', async () => {
       if (visits.length) {
         const v = visits[0];
         const mid = v.member_id || v.memberId || '?';
-        statusEl.textContent = '✓ API werkt! Laatste bezoeker: Lid ' + mid;
+        statusEl.textContent = '\u2713 API werkt! Laatste bezoeker: Lid ' + mid;
         statusEl.style.color = 'var(--greenl)';
       } else {
-        statusEl.textContent = '✓ API werkt (nog geen bezoekers)';
+        statusEl.textContent = '\u2713 API werkt (nog geen bezoekers)';
         statusEl.style.color = 'var(--greenl)';
       }
     } else {
-      statusEl.textContent = '⚠ HTTP ' + res.status + ' — controleer je credentials';
+      statusEl.textContent = '\u26a0 HTTP ' + res.status + ' \u2014 controleer je credentials';
       statusEl.style.color = 'var(--warn)';
     }
   } catch {
-    statusEl.textContent = '⚠ Niet bereikbaar — waarschijnlijk CORS-blokkering. De browser mag de Virtuagym API niet rechtstreeks aanspreken vanaf deze pagina.';
+    statusEl.textContent = '\u26a0 Niet bereikbaar \u2014 waarschijnlijk CORS-blokkering. De browser mag de Virtuagym API niet rechtstreeks aanspreken vanaf deze pagina.';
     statusEl.style.color = 'var(--warn)';
   }
 });
