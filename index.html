@@ -583,7 +583,7 @@ body {
 <!-- SETTINGS MODAL -->
 <div class="mbg" id="settingsBg" hidden>
   <div class="modal">
-    <h3>Instellingen <span style="font-size:11px;font-weight:400;opacity:.45;margin-left:6px">v9nov-b</span></h3>
+    <h3>Instellingen <span style="font-size:11px;font-weight:400;opacity:.45;margin-left:6px">v9nov-c</span></h3>
 
     <h4>Tijdslimiet</h4>
     <div class="field">
@@ -1197,25 +1197,40 @@ document.getElementById('testApiBtn').addEventListener('click', async () => {
   statusEl.textContent = 'Bezig met testen\u2026';
   statusEl.style.color = 'var(--muted)';
   try {
-    const vgUrl2 = 'https://api.virtuagym.com/api/v1/club/' + clubId +
-      '/visits?limit=1&api_key=' + encodeURIComponent(apiKey) +
-      '&club_secret=' + encodeURIComponent(clubSec);
-    const url = 'https://corsproxy.io/?' + encodeURIComponent(vgUrl2);
-    const res = await fetch(url);
-    if (res.ok) {
-      const data = await res.json();
-      const visits = data.result || data.visits || (Array.isArray(data) ? data : []);
-      if (visits.length) {
-        const v = visits[0];
-        const mid = v.member_id || v.memberId || '?';
-        statusEl.textContent = '\u2713 API werkt! Laatste bezoeker: Lid ' + mid;
+    // Test meerdere endpoints om te zien welke werkt
+    const endpoints = [
+      { label: 'checkins', path: '/checkins?limit=1' },
+      { label: 'activity', path: '/activity?limit=1' },
+      { label: 'visits', path: '/visits?limit=1' },
+      { label: 'club-info', path: '' },
+    ];
+    let lastStatus = 0;
+    let worked = false;
+    for (const ep of endpoints) {
+      const vgUrl2 = 'https://api.virtuagym.com/api/v1/club/' + clubId + ep.path +
+        (ep.path.includes('?') ? '&' : '?') +
+        'api_key=' + encodeURIComponent(apiKey) +
+        '&club_secret=' + encodeURIComponent(clubSec);
+      const proxyUrl = 'https://corsproxy.io/?' + encodeURIComponent(vgUrl2);
+      const res = await fetch(proxyUrl);
+      lastStatus = res.status;
+      if (res.ok) {
+        const data = await res.json();
+        const items = data.result || data.visits || data.checkins || (Array.isArray(data) ? data : []);
+        if (items.length) {
+          const v = items[0];
+          const mid = v.member_id || v.memberId || '?';
+          statusEl.textContent = '\u2713 API werkt via /' + ep.label + '! Laatste bezoeker: Lid ' + mid;
+        } else {
+          statusEl.textContent = '\u2713 API werkt via /' + ep.label + ' (nog geen data)';
+        }
         statusEl.style.color = 'var(--greenl)';
-      } else {
-        statusEl.textContent = '\u2713 API werkt (nog geen bezoekers)';
-        statusEl.style.color = 'var(--greenl)';
+        worked = true;
+        break;
       }
-    } else {
-      statusEl.textContent = '\u26a0 HTTP ' + res.status + ' \u2014 controleer je credentials';
+    }
+    if (!worked) {
+      statusEl.textContent = '\u26a0 HTTP ' + lastStatus + ' op alle endpoints \u2014 controleer je credentials';
       statusEl.style.color = 'var(--warn)';
     }
   } catch {
