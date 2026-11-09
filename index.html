@@ -583,7 +583,7 @@ body {
 <!-- SETTINGS MODAL -->
 <div class="mbg" id="settingsBg" hidden>
   <div class="modal">
-    <h3>Instellingen</h3>
+    <h3>Instellingen <span style="font-size:11px;font-weight:400;opacity:.45;margin-left:6px">v9nov</span></h3>
 
     <h4>Tijdslimiet</h4>
     <div class="field">
@@ -605,12 +605,12 @@ body {
     </div>
     <div class="field">
       <label>API Key</label>
-      <input type="password" id="sApiKey" placeholder="Plak hier je API Key" autocomplete="off">
-      <div class="field-hint">Via Virtuagym admin -> Instellingen -> API</div>
+      <input type="text" id="sApiKey" placeholder="Plak hier je API Key" autocomplete="new-password" spellcheck="false">
+      <div class="field-hint">Via Virtuagym admin -&gt; Instellingen -&gt; API</div>
     </div>
     <div class="field">
-      <label>Club Secret</label>
-      <input type="password" id="sClubSecret" placeholder="Plak hier je Club Secret" autocomplete="off">
+      <label>Club Key</label>
+      <input type="text" id="sClubSecret" placeholder="Plak hier je Club Key" autocomplete="new-password" spellcheck="false">
     </div>
     <div class="field">
       <button class="btn-danger" id="testApiBtn">Test API verbinding</button>
@@ -1182,19 +1182,22 @@ document.getElementById('lookupNum').addEventListener('keydown', e => {
 
 // -- API test button ----------------------------------------------
 document.getElementById('testApiBtn').addEventListener('click', async () => {
-  const c = cfg();
+  // Read from form fields directly so test works before saving
+  const clubId   = document.getElementById('sClubId').value.trim()   || cfg().clubId;
+  const apiKey   = document.getElementById('sApiKey').value.trim()   || cfg().apiKey;
+  const clubSec  = document.getElementById('sClubSecret').value.trim() || cfg().clubSecret;
   const statusEl = document.getElementById('apiStatus');
-  if (!c.clubId || !c.apiKey || !c.clubSecret) {
-    statusEl.textContent = 'Geen API credentials ingesteld';
+  if (!clubId || !apiKey || !clubSec) {
+    statusEl.textContent = 'Vul eerst Club ID, API Key en Club Secret in';
     statusEl.style.color = 'var(--warn)';
     return;
   }
   statusEl.textContent = 'Bezig met testen\u2026';
   statusEl.style.color = 'var(--muted)';
   try {
-    const url = 'https://api.virtuagym.com/api/v1/club/' + c.clubId +
-      '/visits?limit=1&api_key=' + encodeURIComponent(c.apiKey) +
-      '&club_secret=' + encodeURIComponent(c.clubSecret);
+    const url = 'https://api.virtuagym.com/api/v1/club/' + clubId +
+      '/visits?limit=1&api_key=' + encodeURIComponent(apiKey) +
+      '&club_secret=' + encodeURIComponent(clubSec);
     const res = await fetch(url);
     if (res.ok) {
       const data = await res.json();
