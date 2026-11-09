@@ -583,7 +583,7 @@ body {
 <!-- SETTINGS MODAL -->
 <div class="mbg" id="settingsBg" hidden>
   <div class="modal">
-    <h3>Instellingen <span style="font-size:11px;font-weight:400;opacity:.45;margin-left:6px">v9nov-d</span></h3>
+    <h3>Instellingen <span style="font-size:11px;font-weight:400;opacity:.45;margin-left:6px">v9nov-e</span></h3>
 
     <h4>Tijdslimiet</h4>
     <div class="field">
@@ -835,8 +835,7 @@ async function lookupMember(key) {
     try {
       const clubId = c.clubId || 87968;
       const vgMemberUrl = `https://api.virtuagym.com/api/v1/club/${clubId}/member/${mid}?api_key=${encodeURIComponent(c.apiKey)}&club_secret=${encodeURIComponent(c.clubSecret)}`;
-      const url = 'https://corsproxy.io/?' + encodeURIComponent(vgMemberUrl);
-      const res = await fetch(url);
+      const res = await corsProxy(vgMemberUrl);
       if (res.ok) {
         const data = await res.json();
         const r = data.result || data;
@@ -1003,12 +1002,8 @@ async function getMidFromToken(token, c) {
   ];
   for (const vgUrl of tryEndpoints) {
     try {
-      const proxyUrl = 'https://corsproxy.io/?' + encodeURIComponent(vgUrl);
-      const ctrl = new AbortController();
-      const tmr = setTimeout(() => ctrl.abort(), 8000);
-      let res;
-      try { res = await fetch(proxyUrl, { signal: ctrl.signal }); } finally { clearTimeout(tmr); }
-      if (!res.ok) continue;
+      const res = await corsProxy(vgUrl, 9000);
+      if (!res || !res.ok) continue;
       const data = await res.json();
       const mid = String(
         data.member_id || data.memberId ||
@@ -1223,11 +1218,7 @@ document.getElementById('testApiBtn').addEventListener('click', async () => {
         (ep.path.includes('?') ? '&' : '?') +
         'api_key=' + encodeURIComponent(apiKey) +
         '&club_secret=' + encodeURIComponent(clubSec);
-      const proxyUrl = 'https://corsproxy.io/?' + encodeURIComponent(vgUrl2);
-      const ctrl = new AbortController();
-      const tmr = setTimeout(() => ctrl.abort(), 8000);
-      let res;
-      try { res = await fetch(proxyUrl, { signal: ctrl.signal }); } finally { clearTimeout(tmr); }
+      const res = await corsProxy(vgUrl2, 9000);
       results.push(ep.label + ':' + res.status);
       if (res.ok) anyOk = true;
       if (res.status === 404 && (ep.label === 'access?code' || ep.label === 'check_in')) any404Access = true;
