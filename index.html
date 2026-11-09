@@ -583,7 +583,7 @@ body {
 <!-- SETTINGS MODAL -->
 <div class="mbg" id="settingsBg" hidden>
   <div class="modal">
-    <h3>Instellingen <span style="font-size:11px;font-weight:400;opacity:.45;margin-left:6px">v9nov-e</span></h3>
+    <h3>Instellingen <span style="font-size:11px;font-weight:400;opacity:.45;margin-left:6px">v9nov-f</span></h3>
 
     <h4>Tijdslimiet</h4>
     <div class="field">
@@ -984,6 +984,26 @@ async function processWithKey(key, name, now) {
   const s = load(); s[key] = { t: now, name }; save(s);
   lastKey = key; render();
   showFlashGreen(key, name);
+}
+
+// CORS proxy: routes via Cloudflare Worker, falls back to allorigins.win
+async function corsProxy(vgUrl, timeoutMs) {
+  timeoutMs = timeoutMs || 9000;
+  const proxies = [
+    u => 'https://vg-proxy.strengthfactory010.workers.dev/?url=' + encodeURIComponent(u),
+    u => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u),
+  ];
+  for (const makePx of proxies) {
+    try {
+      const ctrl = new AbortController();
+      const tmr = setTimeout(() => ctrl.abort(), timeoutMs);
+      let res;
+      try { res = await fetch(makePx(vgUrl), { signal: ctrl.signal }); }
+      finally { clearTimeout(tmr); }
+      if (res) return res;
+    } catch(e) {}
+  }
+  return null;
 }
 
 // Resolves member_id from QR token via Virtuagym access control API.
