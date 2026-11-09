@@ -583,7 +583,7 @@ body {
 <!-- SETTINGS MODAL -->
 <div class="mbg" id="settingsBg" hidden>
   <div class="modal">
-    <h3>Instellingen <span style="font-size:11px;font-weight:400;opacity:.45;margin-left:6px">v9nov</span></h3>
+    <h3>Instellingen <span style="font-size:11px;font-weight:400;opacity:.45;margin-left:6px">v9nov-b</span></h3>
 
     <h4>Tijdslimiet</h4>
     <div class="field">
@@ -834,7 +834,8 @@ async function lookupMember(key) {
   if (c.apiKey && c.clubSecret) {
     try {
       const clubId = c.clubId || 87968;
-      const url = `https://api.virtuagym.com/api/v1/club/${clubId}/member/${mid}?api_key=${encodeURIComponent(c.apiKey)}&club_secret=${encodeURIComponent(c.clubSecret)}`;
+      const vgMemberUrl = `https://api.virtuagym.com/api/v1/club/${clubId}/member/${mid}?api_key=${encodeURIComponent(c.apiKey)}&club_secret=${encodeURIComponent(c.clubSecret)}`;
+      const url = 'https://corsproxy.io/?' + encodeURIComponent(vgMemberUrl);
       const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();
@@ -991,9 +992,10 @@ async function processWithKey(key, name, now) {
 // Null = API unreachable, no recent check-in, CORS blocked, or bad credentials.
 async function getRecentVisitorMid(c, now) {
   try {
-    const url = 'https://api.virtuagym.com/api/v1/club/' + c.clubId +
+    const vgUrl = 'https://api.virtuagym.com/api/v1/club/' + c.clubId +
       '/visits?limit=1&api_key=' + encodeURIComponent(c.apiKey) +
       '&club_secret=' + encodeURIComponent(c.clubSecret);
+    const url = 'https://corsproxy.io/?' + encodeURIComponent(vgUrl);
     const res = await fetch(url);
     if (!res.ok) return null;
     const data = await res.json();
@@ -1195,9 +1197,10 @@ document.getElementById('testApiBtn').addEventListener('click', async () => {
   statusEl.textContent = 'Bezig met testen\u2026';
   statusEl.style.color = 'var(--muted)';
   try {
-    const url = 'https://api.virtuagym.com/api/v1/club/' + clubId +
+    const vgUrl2 = 'https://api.virtuagym.com/api/v1/club/' + clubId +
       '/visits?limit=1&api_key=' + encodeURIComponent(apiKey) +
       '&club_secret=' + encodeURIComponent(clubSec);
+    const url = 'https://corsproxy.io/?' + encodeURIComponent(vgUrl2);
     const res = await fetch(url);
     if (res.ok) {
       const data = await res.json();
