@@ -583,7 +583,7 @@ body {
 <!-- SETTINGS MODAL -->
 <div class="mbg" id="settingsBg" hidden>
   <div class="modal">
-    <h3>Instellingen <span style="font-size:11px;font-weight:400;opacity:.45;margin-left:6px">v9nov-c</span></h3>
+    <h3>Instellingen <span style="font-size:11px;font-weight:400;opacity:.45;margin-left:6px">v9nov-d</span></h3>
 
     <h4>Tijdslimiet</h4>
     <div class="field">
@@ -936,6 +936,34 @@ async function processQR(data) {
   lastQR = data; lastQRt = now;
   processingQR = true;
   try {
+    const token = data.replace('vg_checkin_qr=', '').trim();
+    const c = cfg();
+    // Strategy: validate token via access API (same as door hardware)
+    // ACCESS keys work here even when management endpoints like /visits return 403
+    if (c.clubId && c.apiKey && c.clubSecret) {
+      const mid = await getMidFromToken(token, c);
+      if (mid) {
+        const midKey = 'mid' + mid;
+        const m = active();
+        if (m[midKey]) {
+          const existing = m[midKey];
+          showFlashSimple('warn',
+            'Heeft al een handdoek',
+            (existing.name || 'Lid ' + mid) + '<br><span style="font-size:12px;opacity:.65">' + fElapsed(now - existing.t) + '</span>',
+            '<button class="btn btn-w" data-a="ok">Sluiten</button>'
+          );
+          return;
+        }
+        const memberName = loadMembers()[mid] || '';
+        const s = load();
+        s[midKey] = { t: now, name: memberName, memberId: mid };
+        save(s);
+        lastKey = midKey; render();
+        showFlashGreen(midKey, memberName);
+        return;
+      }
+    }
+    // Fallback: qrKey tries JWT decode then raw token key
     await processWithKey(qrKey(data), '', now);
   } finally {
     processingQR = false;
@@ -953,62 +981,43 @@ async function processWithKey(key, name, now) {
     );
     return;
   }
-
-  // Token key not found \u2014 resolve member_id via visits API.
-  // Registering under mid+M (not the token key) means the record survives
-  // every QR token refresh, so a second scan always shows orange.
-  const c = cfg();
-  if (c.clubId && c.apiKey && c.clubSecret) {
-    const resolvedMid = await getRecentVisitorMid(c, now);
-    if (resolvedMid) {
-      const midKey = 'mid' + resolvedMid;
-      const existing = active()[midKey];
-      if (existing) {
-        showFlashSimple('warn',
-          'Heeft al een handdoek',
-          (existing.name || 'Lid ' + resolvedMid) + '<br><span style="font-size:12px;opacity:.65">' + fElapsed(now - existing.t) + '</span>',
-          '<button class="btn btn-w" data-a="ok">Sluiten</button>'
-        );
-        return;
-      }
-      // New towel \u2014 store under stable mid key so QR refresh is transparent
-      const memberName = loadMembers()[resolvedMid] || '';
-      const s = load();
-      s[midKey] = { t: now, name: memberName, memberId: resolvedMid };
-      save(s);
-      lastKey = midKey; render();
-      showFlashGreen(midKey, memberName);
-      return;
-    }
-  }
-
-  // Fallback: API not configured or unreachable \u2014 register with token key
+  // Register with this key (token key or mid key depending on caller)
   const s = load(); s[key] = { t: now, name }; save(s);
   lastKey = key; render();
   showFlashGreen(key, name);
 }
 
-// Returns the member_id string of the most recent check-in (within 10 min), or null.
-// Null = API unreachable, no recent check-in, CORS blocked, or bad credentials.
-async function getRecentVisitorMid(c, now) {
-  try {
-    const vgUrl = 'https://api.virtuagym.com/api/v1/club/' + c.clubId +
-      '/visits?limit=1&api_key=' + encodeURIComponent(c.apiKey) +
-      '&club_secret=' + encodeURIComponent(c.clubSecret);
-    const url = 'https://corsproxy.io/?' + encodeURIComponent(vgUrl);
-    const res = await fetch(url);
-    if (!res.ok) return null;
-    const data = await res.json();
-    const visits = data.result || data.visits || (Array.isArray(data) ? data : []);
-    if (!visits.length) return null;
-    const v = visits[0];
-    const mid = String(v.member_id || v.memberId || '');
-    if (!mid) return null;
-    // Only use check-ins within the last 10 minutes
-    const visitTs = v.timestamp ? v.timestamp * 1000 : (v.created_at ? new Date(v.created_at).getTime() : 0);
-    if (visitTs && now - visitTs > 600000) return null;
-    return mid;
-  } catch {}
+// Resolves member_id from QR token via Virtuagym access control API.
+// ACCESS keys work on these endpoints (same mechanism as door hardware).
+// Returns member_id string or null if unavailable.
+async function getMidFromToken(token, c) {
+  const auth = '&api_key=' + encodeURIComponent(c.apiKey) +
+               '&club_secret=' + encodeURIComponent(c.clubSecret);
+  const base = 'https://api.virtuagym.com/api/v1/club/' + c.clubId;
+  const tokenEnc = encodeURIComponent(token);
+  const tryEndpoints = [
+    base + '/access?code=' + tokenEnc + auth,
+    base + '/check_in?qr_code=' + tokenEnc + auth,
+    base + '/member/by_qr?qr_code=' + tokenEnc + auth,
+    base + '/member/qr/' + tokenEnc + '?' + auth.slice(1),
+  ];
+  for (const vgUrl of tryEndpoints) {
+    try {
+      const proxyUrl = 'https://corsproxy.io/?' + encodeURIComponent(vgUrl);
+      const ctrl = new AbortController();
+      const tmr = setTimeout(() => ctrl.abort(), 8000);
+      let res;
+      try { res = await fetch(proxyUrl, { signal: ctrl.signal }); } finally { clearTimeout(tmr); }
+      if (!res.ok) continue;
+      const data = await res.json();
+      const mid = String(
+        data.member_id || data.memberId ||
+        (data.result && (data.result.member_id || data.result.memberId)) ||
+        (data.member && (data.member.id || data.member.member_id)) || ''
+      );
+      if (mid && mid !== 'undefined' && mid !== 'null' && mid !== '0') return mid;
+    } catch(e) {}
+  }
   return null;
 }
 
@@ -1196,45 +1205,46 @@ document.getElementById('testApiBtn').addEventListener('click', async () => {
   }
   statusEl.textContent = 'Bezig met testen\u2026';
   statusEl.style.color = 'var(--muted)';
-  try {
-    // Test meerdere endpoints om te zien welke werkt
-    const endpoints = [
-      { label: 'checkins', path: '/checkins?limit=1' },
-      { label: 'activity', path: '/activity?limit=1' },
-      { label: 'visits', path: '/visits?limit=1' },
-      { label: 'club-info', path: '' },
-    ];
-    let lastStatus = 0;
-    let worked = false;
-    for (const ep of endpoints) {
+  // Test access endpoints (ACCESS key) + management endpoints
+  // For access endpoints a 404 means "credentials OK, token not found" = GOOD
+  const fakeToken = 'test_diagnostic_token';
+  const endpoints = [
+    { label: 'access?code', path: '/access?code=' + encodeURIComponent(fakeToken) },
+    { label: 'check_in', path: '/check_in?qr_code=' + encodeURIComponent(fakeToken) },
+    { label: 'visits', path: '/visits?limit=1' },
+    { label: 'club-info', path: '' },
+  ];
+  const results = [];
+  let anyOk = false;
+  let any404Access = false;
+  for (const ep of endpoints) {
+    try {
       const vgUrl2 = 'https://api.virtuagym.com/api/v1/club/' + clubId + ep.path +
         (ep.path.includes('?') ? '&' : '?') +
         'api_key=' + encodeURIComponent(apiKey) +
         '&club_secret=' + encodeURIComponent(clubSec);
       const proxyUrl = 'https://corsproxy.io/?' + encodeURIComponent(vgUrl2);
-      const res = await fetch(proxyUrl);
-      lastStatus = res.status;
-      if (res.ok) {
-        const data = await res.json();
-        const items = data.result || data.visits || data.checkins || (Array.isArray(data) ? data : []);
-        if (items.length) {
-          const v = items[0];
-          const mid = v.member_id || v.memberId || '?';
-          statusEl.textContent = '\u2713 API werkt via /' + ep.label + '! Laatste bezoeker: Lid ' + mid;
-        } else {
-          statusEl.textContent = '\u2713 API werkt via /' + ep.label + ' (nog geen data)';
-        }
-        statusEl.style.color = 'var(--greenl)';
-        worked = true;
-        break;
-      }
+      const ctrl = new AbortController();
+      const tmr = setTimeout(() => ctrl.abort(), 8000);
+      let res;
+      try { res = await fetch(proxyUrl, { signal: ctrl.signal }); } finally { clearTimeout(tmr); }
+      results.push(ep.label + ':' + res.status);
+      if (res.ok) anyOk = true;
+      if (res.status === 404 && (ep.label === 'access?code' || ep.label === 'check_in')) any404Access = true;
+    } catch(e) {
+      results.push(ep.label + ':timeout');
     }
-    if (!worked) {
-      statusEl.textContent = '\u26a0 HTTP ' + lastStatus + ' op alle endpoints \u2014 controleer je credentials';
-      statusEl.style.color = 'var(--warn)';
-    }
-  } catch {
-    statusEl.textContent = '\u26a0 Niet bereikbaar \u2014 waarschijnlijk CORS-blokkering. De browser mag de Virtuagym API niet rechtstreeks aanspreken vanaf deze pagina.';
+  }
+  const summary = results.join(' | ');
+  if (anyOk) {
+    statusEl.textContent = '\u2713 API werkt. ' + summary;
+    statusEl.style.color = 'var(--greenl)';
+  } else if (any404Access) {
+    // 404 on access endpoint = credentials authorized, test-token not found = correct!
+    statusEl.textContent = '\u2713 Access API bereikbaar (404=testtoken onbekend, credentials OK). Scan een QR om te testen. ' + summary;
+    statusEl.style.color = 'var(--greenl)';
+  } else {
+    statusEl.textContent = '\u26a0 ' + summary + ' \u2014 controleer credentials of probeer andere API key';
     statusEl.style.color = 'var(--warn)';
   }
 });
