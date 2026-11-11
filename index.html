@@ -583,7 +583,7 @@ body {
 <!-- SETTINGS MODAL -->
 <div class="mbg" id="settingsBg" hidden>
   <div class="modal">
-    <h3>Instellingen <span style="font-size:11px;font-weight:400;opacity:.45;margin-left:6px">v9nov-g</span></h3>
+    <h3>Instellingen <span style="font-size:11px;font-weight:400;opacity:.45;margin-left:6px">v9nov-h</span></h3>
 
     <h4>Tijdslimiet</h4>
     <div class="field">
@@ -615,6 +615,10 @@ body {
     <div class="field">
       <button class="btn-danger" id="testApiBtn">Test API verbinding</button>
       <div id="apiStatus" style="margin-top:8px;font-size:13px;line-height:1.5"></div>
+    </div>
+    <div class="field">
+      <button class="btn-danger" id="debugVisitsBtn">Debug: toon visits response</button>
+      <pre id="visitsDebug" style="margin-top:8px;font-size:11px;line-height:1.4;white-space:pre-wrap;word-break:break-all;background:rgba(0,0,0,.12);padding:8px;border-radius:6px;display:none"></pre>
     </div>
 
     <h4>Beheer</h4>
@@ -1304,6 +1308,31 @@ document.getElementById('testApiBtn').addEventListener('click', async () => {
   } else {
     statusEl.textContent = '\u26a0 ' + summary + ' \u2014 controleer credentials of probeer andere API key';
     statusEl.style.color = 'var(--warn)';
+  }
+});
+
+// -- Debug visits button ------------------------------------------
+document.getElementById('debugVisitsBtn').addEventListener('click', async () => {
+  const c = cfg();
+  const pre = document.getElementById('visitsDebug');
+  pre.style.display = 'block';
+  pre.textContent = 'Bezig\u2026';
+  if (!c.clubId || !c.apiKey || !c.clubSecret) {
+    pre.textContent = 'Sla eerst Club ID, API Key en Club Secret op.';
+    return;
+  }
+  try {
+    const auth = '&api_key=' + encodeURIComponent(c.apiKey) +
+                 '&club_secret=' + encodeURIComponent(c.clubSecret);
+    const url = 'https://api.virtuagym.com/api/v1/club/' + c.clubId + '/visits?limit=3' + auth;
+    const res = await corsProxy(url, 9000);
+    if (!res) { pre.textContent = 'Geen response (timeout of proxy fout)'; return; }
+    pre.textContent = 'HTTP ' + res.status + '\n';
+    const txt = await res.text();
+    // Show first 1200 chars so it fits on screen
+    pre.textContent += txt.slice(0, 1200) + (txt.length > 1200 ? '\n\u2026(' + txt.length + ' bytes totaal)' : '');
+  } catch(e) {
+    pre.textContent = 'Fout: ' + e;
   }
 });
 
