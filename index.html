@@ -583,7 +583,7 @@ body {
 <!-- SETTINGS MODAL -->
 <div class="mbg" id="settingsBg" hidden>
   <div class="modal">
-    <h3>Instellingen <span style="font-size:11px;font-weight:400;opacity:.45;margin-left:6px">v9nov-h</span></h3>
+    <h3>Instellingen <span style="font-size:11px;font-weight:400;opacity:.45;margin-left:6px">v9nov-i</span></h3>
 
     <h4>Tijdslimiet</h4>
     <div class="field">
@@ -1042,45 +1042,49 @@ async function getMidFromToken(token, c) {
 }
 
 // Fallback member lookup via visits API (used when QR token lookup fails).
+// Virtuagym visits fields: member_id, check_in_timestamp (ms), sorted oldest-first.
 // Strategy:
-//   Pass 1: most recent visit (<=10min) WITHOUT a towel yet  -> new arrival  = current scanner
-//   Pass 2: most recent visit (<=3min)  WITH    a towel      -> duplicate re-scan
+//   Use sync_from to fetch only the last 10 min, sort newest-first.
+//   Pass 1: newest visitor WITHOUT a towel  -> new arrival  = current scanner
+//   Pass 2: newest visitor (<=3min) WITH towel -> duplicate re-scan
 // Returns member_id string or null.
 async function getRecentVisitorMid(c) {
   const auth = '&api_key=' + encodeURIComponent(c.apiKey) +
                '&club_secret=' + encodeURIComponent(c.clubSecret);
   const base = 'https://api.virtuagym.com/api/v1/club/' + c.clubId;
+  const now = Date.now();
+  const sinceMs = now - 10 * 60 * 1000; // last 10 minutes
   try {
-    const url = base + '/visits?limit=10' + auth;
+    const url = base + '/visits?limit=50&sync_from=' + sinceMs + auth;
     const res = await corsProxy(url, 9000);
     if (!res || !res.ok) return null;
     const data = await res.json();
     const visits = Array.isArray(data) ? data : (data.result || data.visits || []);
     if (!visits.length) return null;
-    const now = Date.now();
     const m = active();
+    // check_in_timestamp is the correct field (ms epoch)
     function vtm(v) {
-      const raw = v.created || v.timestamp || v.created_at || v.date || '';
+      var raw = v.check_in_timestamp || v.created || v.timestamp || 0;
       if (!raw) return 0;
       if (typeof raw === 'number') return raw > 1e10 ? raw : raw * 1000;
       return new Date(raw).getTime() || 0;
     }
     function vmid(v) {
-      const s = String(v.member_id || v.memberId || v.member || '');
+      var s = String(v.member_id || v.memberId || '');
       return (s && s !== '0' && s !== 'null' && s !== 'undefined') ? s : '';
     }
-    // Pass 1: newest visit within 10 min that does NOT yet have a towel = new arrival
-    for (var i = 0; i < visits.length; i++) {
-      var v = visits[i];
-      var t = vtm(v); var mid = vmid(v);
-      if (!t || !mid || now - t > 10 * 60 * 1000) continue;
+    // Sort newest first (API returns oldest first)
+    var sorted = visits.slice().sort(function(a, b) { return vtm(b) - vtm(a); });
+    // Pass 1: newest recent visitor WITHOUT a towel = new arrival
+    for (var i = 0; i < sorted.length; i++) {
+      var t = vtm(sorted[i]); var mid = vmid(sorted[i]);
+      if (!mid || !t || now - t > 10 * 60 * 1000) continue;
       if (!m['mid' + mid]) return mid;
     }
-    // Pass 2: newest visit within 3 min that ALREADY has a towel = duplicate re-scan
-    for (var j = 0; j < visits.length; j++) {
-      var w = visits[j];
-      var tw = vtm(w); var midw = vmid(w);
-      if (!tw || !midw || now - tw > 3 * 60 * 1000) continue;
+    // Pass 2: newest recent visitor (<=3min) WITH a towel = duplicate re-scan
+    for (var j = 0; j < sorted.length; j++) {
+      var tw = vtm(sorted[j]); var midw = vmid(sorted[j]);
+      if (!midw || !tw || now - tw > 3 * 60 * 1000) continue;
       if (m['mid' + midw]) return midw;
     }
   } catch(e) {}
