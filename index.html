@@ -583,7 +583,7 @@ body {
 <!-- SETTINGS MODAL -->
 <div class="mbg" id="settingsBg" hidden>
   <div class="modal">
-    <h3>Instellingen <span style="font-size:11px;font-weight:400;opacity:.45;margin-left:6px">v9nov-f</span></h3>
+    <h3>Instellingen <span style="font-size:11px;font-weight:400;opacity:.45;margin-left:6px">v9nov-g</span></h3>
 
     <h4>Tijdslimiet</h4>
     <div class="field">
@@ -940,7 +940,8 @@ async function processQR(data) {
     // Strategy: validate token via access API (same as door hardware)
     // ACCESS keys work here even when management endpoints like /visits return 403
     if (c.clubId && c.apiKey && c.clubSecret) {
-      const mid = await getMidFromToken(token, c);
+      let mid = await getMidFromToken(token, c);
+      if (!mid) mid = await getRecentVisitorMid(c);
       if (mid) {
         const midKey = 'mid' + mid;
         const m = active();
@@ -1033,6 +1034,52 @@ async function getMidFromToken(token, c) {
       if (mid && mid !== 'undefined' && mid !== 'null' && mid !== '0') return mid;
     } catch(e) {}
   }
+  return null;
+}
+
+// Fallback member lookup via visits API (used when QR token lookup fails).
+// Strategy:
+//   Pass 1: most recent visit (<=10min) WITHOUT a towel yet  -> new arrival  = current scanner
+//   Pass 2: most recent visit (<=3min)  WITH    a towel      -> duplicate re-scan
+// Returns member_id string or null.
+async function getRecentVisitorMid(c) {
+  const auth = '&api_key=' + encodeURIComponent(c.apiKey) +
+               '&club_secret=' + encodeURIComponent(c.clubSecret);
+  const base = 'https://api.virtuagym.com/api/v1/club/' + c.clubId;
+  try {
+    const url = base + '/visits?limit=10' + auth;
+    const res = await corsProxy(url, 9000);
+    if (!res || !res.ok) return null;
+    const data = await res.json();
+    const visits = Array.isArray(data) ? data : (data.result || data.visits || []);
+    if (!visits.length) return null;
+    const now = Date.now();
+    const m = active();
+    function vtm(v) {
+      const raw = v.created || v.timestamp || v.created_at || v.date || '';
+      if (!raw) return 0;
+      if (typeof raw === 'number') return raw > 1e10 ? raw : raw * 1000;
+      return new Date(raw).getTime() || 0;
+    }
+    function vmid(v) {
+      const s = String(v.member_id || v.memberId || v.member || '');
+      return (s && s !== '0' && s !== 'null' && s !== 'undefined') ? s : '';
+    }
+    // Pass 1: newest visit within 10 min that does NOT yet have a towel = new arrival
+    for (var i = 0; i < visits.length; i++) {
+      var v = visits[i];
+      var t = vtm(v); var mid = vmid(v);
+      if (!t || !mid || now - t > 10 * 60 * 1000) continue;
+      if (!m['mid' + mid]) return mid;
+    }
+    // Pass 2: newest visit within 3 min that ALREADY has a towel = duplicate re-scan
+    for (var j = 0; j < visits.length; j++) {
+      var w = visits[j];
+      var tw = vtm(w); var midw = vmid(w);
+      if (!tw || !midw || now - tw > 3 * 60 * 1000) continue;
+      if (m['mid' + midw]) return midw;
+    }
+  } catch(e) {}
   return null;
 }
 
