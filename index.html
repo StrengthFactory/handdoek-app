@@ -583,7 +583,7 @@ body {
 <!-- SETTINGS MODAL -->
 <div class="mbg" id="settingsBg" hidden>
   <div class="modal">
-    <h3>Instellingen <span style="font-size:11px;font-weight:400;opacity:.45;margin-left:6px">v9nov-i</span></h3>
+    <h3>Instellingen <span style="font-size:11px;font-weight:400;opacity:.45;margin-left:6px">v9nov-k</span></h3>
 
     <h4>Tijdslimiet</h4>
     <div class="field">
@@ -1044,16 +1044,16 @@ async function getMidFromToken(token, c) {
 // Fallback member lookup via visits API (used when QR token lookup fails).
 // Virtuagym visits fields: member_id, check_in_timestamp (ms), sorted oldest-first.
 // Strategy:
-//   Use sync_from to fetch only the last 10 min, sort newest-first.
+//   Use sync_from to fetch visits from last 4 hours, sort newest-first.
 //   Pass 1: newest visitor WITHOUT a towel  -> new arrival  = current scanner
-//   Pass 2: newest visitor (<=3min) WITH towel -> duplicate re-scan
+//   Pass 2: newest visitor (<=4h) WITH towel -> duplicate re-scan
 // Returns member_id string or null.
 async function getRecentVisitorMid(c) {
   const auth = '&api_key=' + encodeURIComponent(c.apiKey) +
                '&club_secret=' + encodeURIComponent(c.clubSecret);
   const base = 'https://api.virtuagym.com/api/v1/club/' + c.clubId;
   const now = Date.now();
-  const sinceMs = now - 10 * 60 * 1000; // last 10 minutes
+  const sinceMs = now - 4 * 60 * 60 * 1000; // last 4 hours
   try {
     const url = base + '/visits?limit=50&sync_from=' + sinceMs + auth;
     const res = await corsProxy(url, 9000);
@@ -1078,13 +1078,13 @@ async function getRecentVisitorMid(c) {
     // Pass 1: newest recent visitor WITHOUT a towel = new arrival
     for (var i = 0; i < sorted.length; i++) {
       var t = vtm(sorted[i]); var mid = vmid(sorted[i]);
-      if (!mid || !t || now - t > 10 * 60 * 1000) continue;
+      if (!mid || !t || now - t > 4 * 60 * 60 * 1000) continue;
       if (!m['mid' + mid]) return mid;
     }
-    // Pass 2: newest recent visitor (<=3min) WITH a towel = duplicate re-scan
+    // Pass 2: newest recent visitor (<=30min) WITH a towel = duplicate re-scan
     for (var j = 0; j < sorted.length; j++) {
       var tw = vtm(sorted[j]); var midw = vmid(sorted[j]);
-      if (!midw || !tw || now - tw > 3 * 60 * 1000) continue;
+      if (!midw || !tw || now - tw > 4 * 60 * 60 * 1000) continue;
       if (m['mid' + midw]) return midw;
     }
   } catch(e) {}
