@@ -13,21 +13,21 @@
 <style>
 /* -- Tokens ------------------------------------------------------- */
 :root {
-  --bg:     #1b1d1e;
-  --surf:   #252729;
-  --surf2:  #2e3032;
-  --border: #383a3c;
-  --fg:     #f3eae5;
-  --muted:  #7a6a5f;
+  --bg:     #F6F0EA;
+  --surf:   #EDE6DC;
+  --surf2:  #E4DAD0;
+  --border: #C2A882;
+  --fg:     #2a1f1a;
+  --muted:  #8C7A68;
   --accent: #8b2252;
   --accent2:#a82a65;
-  --green:  #1a7a4a;
-  --greenl: #16a34a;
-  --red:    #c0292a;
+  --green:  #155e36;
+  --greenl: #15803d;
+  --red:    #991b1b;
   --redl:   #dc2626;
   --fd:     'Libre Bodoni', Georgia, serif;
   --fb:     'Hanken Grotesk', system-ui, sans-serif;
-  color-scheme: dark;
+  color-scheme: light;
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -583,7 +583,7 @@ body {
 <!-- SETTINGS MODAL -->
 <div class="mbg" id="settingsBg" hidden>
   <div class="modal">
-    <h3>Instellingen</h3>
+    <h3>Instellingen <span style="font-size:11px;font-weight:400;opacity:.45;margin-left:6px">v9nov-m</span></h3>
 
     <h4>Tijdslimiet</h4>
     <div class="field">
@@ -605,16 +605,20 @@ body {
     </div>
     <div class="field">
       <label>API Key</label>
-      <input type="password" id="sApiKey" placeholder="Plak hier je API Key" autocomplete="off">
-      <div class="field-hint">Via Virtuagym admin -> Instellingen -> API</div>
+      <input type="text" id="sApiKey" placeholder="Plak hier je API Key" autocomplete="new-password" spellcheck="false">
+      <div class="field-hint">Via Virtuagym admin -&gt; Instellingen -&gt; API</div>
     </div>
     <div class="field">
-      <label>Club Secret</label>
-      <input type="password" id="sClubSecret" placeholder="Plak hier je Club Secret" autocomplete="off">
+      <label>Club Key</label>
+      <input type="text" id="sClubSecret" placeholder="Plak hier je Club Key" autocomplete="new-password" spellcheck="false">
     </div>
     <div class="field">
       <button class="btn-danger" id="testApiBtn">Test API verbinding</button>
       <div id="apiStatus" style="margin-top:8px;font-size:13px;line-height:1.5"></div>
+    </div>
+    <div class="field">
+      <button class="btn-danger" id="debugVisitsBtn">Debug: toon visits response</button>
+      <pre id="visitsDebug" style="margin-top:8px;font-size:11px;line-height:1.4;white-space:pre-wrap;word-break:break-all;background:rgba(0,0,0,.12);padding:8px;border-radius:6px;display:none"></pre>
     </div>
 
     <h4>Beheer</h4>
@@ -804,6 +808,22 @@ document.getElementById('flash').addEventListener('click', e => {
     const s = load(); delete s[lastKey]; save(s);
     lastKey = null; lastQR = null; hideFlash();
   }
+  // Staff override: give towel despite anonymous grace-period block
+  if (a === 'anon-override') {
+    hideFlash();
+    if (lastQR && lastQR.startsWith('vg_checkin_qr=')) {
+      const tKey = qrKey(lastQR);
+      const ts = Date.now();
+      const s = load();
+      s[tKey] = { t: ts, name: '' };
+      save(s);
+      anonGrantTs = ts;
+      anonGrantKey = tKey;
+      lastKey = tKey;
+      render();
+      showFlashGreen(tKey, '');
+    }
+  }
 });
 
 // -- Name lookup --------------------------------------------------
@@ -834,8 +854,8 @@ async function lookupMember(key) {
   if (c.apiKey && c.clubSecret) {
     try {
       const clubId = c.clubId || 87968;
-      const url = `https://api.virtuagym.com/api/v1/club/${clubId}/member/${mid}?api_key=${encodeURIComponent(c.apiKey)}&club_secret=${encodeURIComponent(c.clubSecret)}`;
-      const res = await fetch(url);
+      const vgMemberUrl = `https://api.virtuagym.com/api/v1/club/${clubId}/member/${mid}?api_key=${encodeURIComponent(c.apiKey)}&club_secret=${encodeURIComponent(c.clubSecret)}`;
+      const res = await corsProxy(vgMemberUrl);
       if (res.ok) {
         const data = await res.json();
         const r = data.result || data;
@@ -926,6 +946,10 @@ function saveLinkToKey(key, mid, name, prefix = '\u2713 ') {
 // This catches the token-refreshed-while-still-at-desk case.
 let lastQR = null, lastQRt = 0;
 let processingQR = false; // guard against overlapping async calls
+// Anonymous grant tracker: when no member-id is available and towel is given by token key,
+// track the grant time/key so a re-scan with a refreshed QR (new token, same person)
+// within 3 minutes shows orange instead of green.
+let anonGrantTs = 0, anonGrantKey = '';
 
 async function processQR(data) {
   const now = Date.now();
@@ -935,7 +959,53 @@ async function processQR(data) {
   lastQR = data; lastQRt = now;
   processingQR = true;
   try {
-    await processWithKey(qrKey(data), '', now);
+    const token = data.replace('vg_checkin_qr=', '').trim();
+    const c = cfg();
+    // Strategy: validate token via access API (same as door hardware)
+    // ACCESS keys work here even when management endpoints like /visits return 403
+    if (c.clubId && c.apiKey && c.clubSecret) {
+      let mid = await getMidFromToken(token, c);
+      if (!mid) mid = await getRecentVisitorMid(c);
+      if (mid) {
+        const midKey = 'mid' + mid;
+        const m = active();
+        if (m[midKey]) {
+          const existing = m[midKey];
+          showFlashSimple('warn',
+            'Heeft al een handdoek',
+            (existing.name || 'Lid ' + mid) + '<br><span style="font-size:12px;opacity:.65">' + fElapsed(now - existing.t) + '</span>',
+            '<button class="btn btn-w" data-a="ok">Sluiten</button>'
+          );
+          return;
+        }
+        const memberName = loadMembers()[mid] || '';
+        const s = load();
+        s[midKey] = { t: now, name: memberName, memberId: mid };
+        save(s);
+        lastKey = midKey; render();
+        showFlashGreen(midKey, memberName);
+        return;
+      }
+    }
+    // Fallback: qrKey tries JWT decode then raw token key
+    const tKey = qrKey(data);
+    const mNow = active();
+    // Grace period: if another token-based towel was just given within 3 min AND this
+    // is a different token, it is very likely the same member rescanning after QR refresh.
+    const anonWin = 3 * 60 * 1000;
+    if (!mNow[tKey] && anonGrantTs && (now - anonGrantTs < anonWin) && tKey !== anonGrantKey) {
+      const minAgo = Math.max(1, Math.round((now - anonGrantTs) / 60000));
+      showFlashSimple('warn',
+        'Heeft al een handdoek',
+        'QR vernieuwd \u2014 ' + minAgo + ' min geleden uitgedeeld',
+        '<button class="btn btn-wr" data-a="anon-override">Toch uitdelen</button>' +
+        '<button class="btn btn-w" data-a="ok">Sluiten</button>'
+      );
+      return;
+    }
+    await processWithKey(tKey, '', now);
+    // Update anon tracker only when a new grant was actually made
+    if (!mNow[tKey]) { anonGrantTs = now; anonGrantKey = tKey; }
   } finally {
     processingQR = false;
   }
@@ -952,61 +1022,111 @@ async function processWithKey(key, name, now) {
     );
     return;
   }
-
-  // Token key not found \u2014 resolve member_id via visits API.
-  // Registering under mid+M (not the token key) means the record survives
-  // every QR token refresh, so a second scan always shows orange.
-  const c = cfg();
-  if (c.clubId && c.apiKey && c.clubSecret) {
-    const resolvedMid = await getRecentVisitorMid(c, now);
-    if (resolvedMid) {
-      const midKey = 'mid' + resolvedMid;
-      const existing = active()[midKey];
-      if (existing) {
-        showFlashSimple('warn',
-          'Heeft al een handdoek',
-          (existing.name || 'Lid ' + resolvedMid) + '<br><span style="font-size:12px;opacity:.65">' + fElapsed(now - existing.t) + '</span>',
-          '<button class="btn btn-w" data-a="ok">Sluiten</button>'
-        );
-        return;
-      }
-      // New towel \u2014 store under stable mid key so QR refresh is transparent
-      const memberName = loadMembers()[resolvedMid] || '';
-      const s = load();
-      s[midKey] = { t: now, name: memberName, memberId: resolvedMid };
-      save(s);
-      lastKey = midKey; render();
-      showFlashGreen(midKey, memberName);
-      return;
-    }
-  }
-
-  // Fallback: API not configured or unreachable \u2014 register with token key
+  // Register with this key (token key or mid key depending on caller)
   const s = load(); s[key] = { t: now, name }; save(s);
   lastKey = key; render();
   showFlashGreen(key, name);
 }
 
-// Returns the member_id string of the most recent check-in (within 10 min), or null.
-// Null = API unreachable, no recent check-in, CORS blocked, or bad credentials.
-async function getRecentVisitorMid(c, now) {
+// CORS proxy: routes via Cloudflare Worker, falls back to allorigins.win
+async function corsProxy(vgUrl, timeoutMs) {
+  timeoutMs = timeoutMs || 9000;
+  const proxies = [
+    u => 'https://vg-proxy.strengthfactory010.workers.dev/?url=' + encodeURIComponent(u),
+    u => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u),
+  ];
+  for (const makePx of proxies) {
+    try {
+      const ctrl = new AbortController();
+      const tmr = setTimeout(() => ctrl.abort(), timeoutMs);
+      let res;
+      try { res = await fetch(makePx(vgUrl), { signal: ctrl.signal }); }
+      finally { clearTimeout(tmr); }
+      if (res) return res;
+    } catch(e) {}
+  }
+  return null;
+}
+
+// Resolves member_id from QR token via Virtuagym access control API.
+// ACCESS keys work on these endpoints (same mechanism as door hardware).
+// Returns member_id string or null if unavailable.
+async function getMidFromToken(token, c) {
+  const auth = '&api_key=' + encodeURIComponent(c.apiKey) +
+               '&club_secret=' + encodeURIComponent(c.clubSecret);
+  const base = 'https://api.virtuagym.com/api/v1/club/' + c.clubId;
+  const tokenEnc = encodeURIComponent(token);
+  const tryEndpoints = [
+    base + '/access?code=' + tokenEnc + auth,
+    base + '/check_in?qr_code=' + tokenEnc + auth,
+    base + '/member/by_qr?qr_code=' + tokenEnc + auth,
+    base + '/member/qr/' + tokenEnc + '?' + auth.slice(1),
+  ];
+  for (const vgUrl of tryEndpoints) {
+    try {
+      const res = await corsProxy(vgUrl, 9000);
+      if (!res || !res.ok) continue;
+      const data = await res.json();
+      const mid = String(
+        data.member_id || data.memberId ||
+        (data.result && (data.result.member_id || data.result.memberId)) ||
+        (data.member && (data.member.id || data.member.member_id)) || ''
+      );
+      if (mid && mid !== 'undefined' && mid !== 'null' && mid !== '0') return mid;
+    } catch(e) {}
+  }
+  return null;
+}
+
+// Fallback member lookup via visits API (used when QR token lookup fails).
+// Virtuagym visits fields: member_id, check_in_timestamp (ms), sorted oldest-first.
+// Strategy:
+//   Use sync_from to fetch visits from last 4 hours, sort newest-first.
+//   Pass 1: newest visitor WITHOUT a towel  -> new arrival  = current scanner
+//   Pass 2: newest visitor (<=4h) WITH towel -> duplicate re-scan
+// Returns member_id string or null.
+async function getRecentVisitorMid(c) {
+  const auth = '&api_key=' + encodeURIComponent(c.apiKey) +
+               '&club_secret=' + encodeURIComponent(c.clubSecret);
+  const base = 'https://api.virtuagym.com/api/v1/club/' + c.clubId;
+  const now = Date.now();
+  const sinceMs = now - 4 * 60 * 60 * 1000; // last 4 hours
+  // Virtuagym sync_from expects seconds (Unix timestamp), not milliseconds
+  const sinceSec = Math.floor(sinceMs / 1000);
   try {
-    const url = 'https://api.virtuagym.com/api/v1/club/' + c.clubId +
-      '/visits?limit=1&api_key=' + encodeURIComponent(c.apiKey) +
-      '&club_secret=' + encodeURIComponent(c.clubSecret);
-    const res = await fetch(url);
-    if (!res.ok) return null;
+    const url = base + '/visits?limit=50&sync_from=' + sinceSec + auth;
+    const res = await corsProxy(url, 9000);
+    if (!res || !res.ok) return null;
     const data = await res.json();
-    const visits = data.result || data.visits || (Array.isArray(data) ? data : []);
+    const visits = Array.isArray(data) ? data : (data.result || data.visits || []);
     if (!visits.length) return null;
-    const v = visits[0];
-    const mid = String(v.member_id || v.memberId || '');
-    if (!mid) return null;
-    // Only use check-ins within the last 10 minutes
-    const visitTs = v.timestamp ? v.timestamp * 1000 : (v.created_at ? new Date(v.created_at).getTime() : 0);
-    if (visitTs && now - visitTs > 600000) return null;
-    return mid;
-  } catch {}
+    const m = active();
+    // check_in_timestamp is the correct field (ms epoch)
+    function vtm(v) {
+      var raw = v.check_in_timestamp || v.created || v.timestamp || 0;
+      if (!raw) return 0;
+      if (typeof raw === 'number') return raw > 1e10 ? raw : raw * 1000;
+      return new Date(raw).getTime() || 0;
+    }
+    function vmid(v) {
+      var s = String(v.member_id || v.memberId || '');
+      return (s && s !== '0' && s !== 'null' && s !== 'undefined') ? s : '';
+    }
+    // Sort newest first (API returns oldest first)
+    var sorted = visits.slice().sort(function(a, b) { return vtm(b) - vtm(a); });
+    // Pass 1: newest recent visitor WITHOUT a towel = new arrival
+    for (var i = 0; i < sorted.length; i++) {
+      var t = vtm(sorted[i]); var mid = vmid(sorted[i]);
+      if (!mid || !t || now - t > 4 * 60 * 60 * 1000) continue;
+      if (!m['mid' + mid]) return mid;
+    }
+    // Pass 2: newest recent visitor (<=30min) WITH a towel = duplicate re-scan
+    for (var j = 0; j < sorted.length; j++) {
+      var tw = vtm(sorted[j]); var midw = vmid(sorted[j]);
+      if (!midw || !tw || now - tw > 4 * 60 * 60 * 1000) continue;
+      if (m['mid' + midw]) return midw;
+    }
+  } catch(e) {}
   return null;
 }
 
@@ -1194,30 +1314,68 @@ document.getElementById('testApiBtn').addEventListener('click', async () => {
   }
   statusEl.textContent = 'Bezig met testen\u2026';
   statusEl.style.color = 'var(--muted)';
-  try {
-    const url = 'https://api.virtuagym.com/api/v1/club/' + clubId +
-      '/visits?limit=1&api_key=' + encodeURIComponent(apiKey) +
-      '&club_secret=' + encodeURIComponent(clubSec);
-    const res = await fetch(url);
-    if (res.ok) {
-      const data = await res.json();
-      const visits = data.result || data.visits || (Array.isArray(data) ? data : []);
-      if (visits.length) {
-        const v = visits[0];
-        const mid = v.member_id || v.memberId || '?';
-        statusEl.textContent = '\u2713 API werkt! Laatste bezoeker: Lid ' + mid;
-        statusEl.style.color = 'var(--greenl)';
-      } else {
-        statusEl.textContent = '\u2713 API werkt (nog geen bezoekers)';
-        statusEl.style.color = 'var(--greenl)';
-      }
-    } else {
-      statusEl.textContent = '\u26a0 HTTP ' + res.status + ' \u2014 controleer je credentials';
-      statusEl.style.color = 'var(--warn)';
+  // Test access endpoints (ACCESS key) + management endpoints
+  // For access endpoints a 404 means "credentials OK, token not found" = GOOD
+  const fakeToken = 'test_diagnostic_token';
+  const endpoints = [
+    { label: 'access?code', path: '/access?code=' + encodeURIComponent(fakeToken) },
+    { label: 'check_in', path: '/check_in?qr_code=' + encodeURIComponent(fakeToken) },
+    { label: 'visits', path: '/visits?limit=1' },
+    { label: 'club-info', path: '' },
+  ];
+  const results = [];
+  let anyOk = false;
+  let any404Access = false;
+  for (const ep of endpoints) {
+    try {
+      const vgUrl2 = 'https://api.virtuagym.com/api/v1/club/' + clubId + ep.path +
+        (ep.path.includes('?') ? '&' : '?') +
+        'api_key=' + encodeURIComponent(apiKey) +
+        '&club_secret=' + encodeURIComponent(clubSec);
+      const res = await corsProxy(vgUrl2, 9000);
+      results.push(ep.label + ':' + res.status);
+      if (res.ok) anyOk = true;
+      if (res.status === 404 && (ep.label === 'access?code' || ep.label === 'check_in')) any404Access = true;
+    } catch(e) {
+      results.push(ep.label + ':timeout');
     }
-  } catch {
-    statusEl.textContent = '\u26a0 Niet bereikbaar \u2014 waarschijnlijk CORS-blokkering. De browser mag de Virtuagym API niet rechtstreeks aanspreken vanaf deze pagina.';
+  }
+  const summary = results.join(' | ');
+  if (anyOk) {
+    statusEl.textContent = '\u2713 API werkt. ' + summary;
+    statusEl.style.color = 'var(--greenl)';
+  } else if (any404Access) {
+    // 404 on access endpoint = credentials authorized, test-token not found = correct!
+    statusEl.textContent = '\u2713 Access API bereikbaar (404=testtoken onbekend, credentials OK). Scan een QR om te testen. ' + summary;
+    statusEl.style.color = 'var(--greenl)';
+  } else {
+    statusEl.textContent = '\u26a0 ' + summary + ' \u2014 controleer credentials of probeer andere API key';
     statusEl.style.color = 'var(--warn)';
+  }
+});
+
+// -- Debug visits button ------------------------------------------
+document.getElementById('debugVisitsBtn').addEventListener('click', async () => {
+  const c = cfg();
+  const pre = document.getElementById('visitsDebug');
+  pre.style.display = 'block';
+  pre.textContent = 'Bezig\u2026';
+  if (!c.clubId || !c.apiKey || !c.clubSecret) {
+    pre.textContent = 'Sla eerst Club ID, API Key en Club Secret op.';
+    return;
+  }
+  try {
+    const auth = '&api_key=' + encodeURIComponent(c.apiKey) +
+                 '&club_secret=' + encodeURIComponent(c.clubSecret);
+    const url = 'https://api.virtuagym.com/api/v1/club/' + c.clubId + '/visits?limit=3' + auth;
+    const res = await corsProxy(url, 9000);
+    if (!res) { pre.textContent = 'Geen response (timeout of proxy fout)'; return; }
+    pre.textContent = 'HTTP ' + res.status + '\n';
+    const txt = await res.text();
+    // Show first 1200 chars so it fits on screen
+    pre.textContent += txt.slice(0, 1200) + (txt.length > 1200 ? '\n\u2026(' + txt.length + ' bytes totaal)' : '');
+  } catch(e) {
+    pre.textContent = 'Fout: ' + e;
   }
 });
 
